@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 
 public class Node {
 
@@ -20,6 +21,8 @@ public class Node {
 
     private record VoteRequest (int term , int candidateId){}
     private static final Gson gson = new Gson();
+    private long lastActivityMs = System.currentTimeMillis();
+    private long electionTimeoutMs = freshTimeout();
 
     private static final Map<Integer, Integer> CLUSTER  = new TreeMap<>(
             Map.of(
@@ -45,27 +48,27 @@ public class Node {
     private final Map<Integer, Long> lastSeen = new ConcurrentHashMap<>();
 
 
-    void tick() {
-        for (int peerId : CLUSTER.keySet()) {
-            if (peerId == id) {
-                continue;
-            }
-            try {
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create("http://localhost:" + CLUSTER.get(peerId) + "/status"))
-                        .timeout(Duration.ofMillis(300))
-                        .GET()
-                        .build();
-                HttpResponse<String> response =
-                        http.send(request, HttpResponse.BodyHandlers.ofString());
-                JsonObject body = gson.fromJson(response.body(), JsonObject.class);
-                lastSeen.put(body.get("nodeId").getAsInt(), System.currentTimeMillis());
-                System.out.println("heartbeat ok: node " + peerId);
-            } catch (Exception e) {
-                System.out.println("heartbeat failed: node " + peerId);
-            }
+    synchronized void tick() {
+        if ((role == Role.FOLLOWER || role == Role.CANDIDATE)
+                && System.currentTimeMillis() - lastActivityMs > electionTimeoutMs) {
+            startElection();
         }
     }
+    private static long freshTimeout() {
+        return ThreadLocalRandom.current().nextLong(1500, 3000);
+    }
+    private void startElection() {
+        role = Role.CANDIDATE ;
+        currentTerm ++ ;
+        votedFor = id ;
+        leaderId = -1 ;
+        lastActivityMs = System.currentTimeMillis();
+        electionTimeoutMs = freshTimeout();
+        System.out.println("election: node " + id + " declares candidacy, term "+ currentTerm);
+
+
+    }
+
     Node(int id, int port) {
         this.id = id;
         this.port = port;
