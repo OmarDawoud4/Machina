@@ -4,7 +4,7 @@ import com.google.gson.Gson;
 
 public class Node {
 
-    private record Status(int nodeId, int port) {}
+    private record Status(int nodeId, int port , String role) {}
 
     private static final Gson gson = new Gson();
 
@@ -17,6 +17,6 @@ public class Node {
     }
 
     String statusJson() {
-        return gson.toJson(new Status(id, port));
+        return gson.toJson(new Status(id, port,"follower"));
     }
 }
