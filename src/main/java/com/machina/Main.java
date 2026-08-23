@@ -1,4 +1,7 @@
 package com.machina;
+
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 public class Main {
 
     public static void main(String[] args) throws Exception {
@@ -17,6 +20,9 @@ public class Main {
         }
         Node node = new Node(id, port);
         new HttpApi(node).start();
+        Executors.newSingleThreadScheduledExecutor()
+                .scheduleAtFixedRate(node::tick, 500, 500, TimeUnit.MILLISECONDS);
+
         System.out.println("node " + id + " listening on " + port);
     }
 }
