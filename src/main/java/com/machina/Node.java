@@ -17,6 +17,8 @@ public class Node {
 
     private record Status(int nodeId, int port , String role, int currentTerm,
                           int leaderId, Map<Integer,String>peers) {}
+
+    private record VoteRequest (int term , int candidateId){}
     private static final Gson gson = new Gson();
 
     private static final Map<Integer, Integer> CLUSTER  = new TreeMap<>(
@@ -41,6 +43,7 @@ public class Node {
     final int port;
 
     private final Map<Integer, Long> lastSeen = new ConcurrentHashMap<>();
+
 
     void tick() {
         for (int peerId : CLUSTER.keySet()) {
@@ -81,6 +84,32 @@ public class Node {
 
         }
 
+
         return gson.toJson(new Status(id, port, role.name().toLowerCase(),
                 currentTerm, leaderId, peers));    }
+
+
+    synchronized String handleRequestVote(String requestBody) {
+
+        VoteRequest req = gson.fromJson(requestBody, VoteRequest.class);
+        boolean grant ;
+        if (req.term()>currentTerm) {
+            currentTerm = req.term();
+            role = Role.FOLLOWER;
+            votedFor = - 1;
+        }
+        grant = votedFor == -1 || votedFor == req.candidateId();
+
+        if(grant) {
+
+               votedFor = req.candidateId();
+        }
+        JsonObject response = new JsonObject();
+        response.addProperty("voteGranted" , grant );
+        return response.toString();
+    }
+
+
+
+
 }

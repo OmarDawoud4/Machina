@@ -2,6 +2,8 @@ package com.machina;
 
 import com.sun.net.httpserver.HttpServer;
 
+import com.sun.net.httpserver.HttpExchange;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -24,6 +26,22 @@ public class HttpApi {
                 out.write(body);
             }
         });
+        server.createContext("/requestvote", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(),
+                    StandardCharsets.UTF_8);
+            respond(exchange, 200, node.handleRequestVote(body));
+        });
+
         server.start();
+    }
+
+    private static void respond(HttpExchange exchange, int code, String body)
+            throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(code, bytes.length);
+        try (OutputStream out = exchange.getResponseBody()) {
+            out.write(bytes);
+        }
     }
 }
