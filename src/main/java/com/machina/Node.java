@@ -31,6 +31,8 @@ public class Node {
                     3,7003
             )
     );
+
+    private static final int MAJORITY = 2 ;
     private static final long DEAD_AFTER_MS =1500 ;
     private static final HttpClient http = HttpClient.newBuilder()
                         .connectTimeout(Duration.ofMillis(200))
@@ -57,19 +59,49 @@ public class Node {
     private static long freshTimeout() {
         return ThreadLocalRandom.current().nextLong(1500, 3000);
     }
-    private void startElection() {
-        role = Role.CANDIDATE ;
-        currentTerm ++ ;
-        votedFor = id ;
-        leaderId = -1 ;
-        lastActivityMs = System.currentTimeMillis();
-        electionTimeoutMs = freshTimeout();
-        System.out.println("election: node " + id + " declares candidacy, term "+ currentTerm);
+        private void startElection() {
+            role = Role.CANDIDATE ;
+            currentTerm ++ ;
+            votedFor = id ;
+            leaderId = -1 ;
+            lastActivityMs = System.currentTimeMillis();
+            electionTimeoutMs = freshTimeout();
+            int electionTerm = currentTerm;
+
+            System.out.println("election: node " + id + " declares candidacy, term "+ currentTerm);
+            String json = gson.toJson(new VoteRequest(electionTerm, id));
+            int votes = -1 ;
+
+            for (int peerId : CLUSTER.keySet()) {
+                if (peerId == id) {continue;
+                }
+                try {
+                    HttpRequest request = HttpRequest.newBuilder()
+                            .uri(URI.create("http://localhost:" + CLUSTER.get(peerId)
+                                    + "/requestvote"))
+                            .timeout(Duration.ofMillis(500))
+                            .header("Content-Type", "application/json")
+                            .POST(HttpRequest.BodyPublishers.ofString(json))
+                            .build();
+                    HttpResponse<String> response =
+                            http.send(request, HttpResponse.BodyHandlers.ofString());
+                    JsonObject body = gson.fromJson(response.body(), JsonObject.class);
+                    if (body.get("voteGranted").getAsBoolean()) {
+                        votes++;
+                        System.out.println("election: node " + peerId + " voted for me");
+                    }
+                } catch (Exception e) {
+                    System.out.println("election: node " + peerId + " unreachable");
+                }
+            }
+            if (votes >= MAJORITY && role == Role.CANDIDATE && currentTerm == electionTerm) {
+                role = Role.LEADER;
+                leaderId = id;
+                System.out.println("node " + id + " IS THE LEADER, term " + currentTerm);
+            }}
 
 
-    }
-
-    Node(int id, int port) {
+            Node(int id, int port) {
         this.id = id;
         this.port = port;
     }
