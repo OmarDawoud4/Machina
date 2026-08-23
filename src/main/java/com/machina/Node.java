@@ -15,8 +15,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class Node {
 
-    private record Status(int nodeId, int port , String role, Map<Integer,String>peers) {}
-
+    private record Status(int nodeId, int port , String role, int currentTerm,
+                          int leaderId, Map<Integer,String>peers) {}
     private static final Gson gson = new Gson();
 
     private static final Map<Integer, Integer> CLUSTER  = new TreeMap<>(
@@ -30,6 +30,13 @@ public class Node {
     private static final HttpClient http = HttpClient.newBuilder()
                         .connectTimeout(Duration.ofMillis(200))
                         .build();
+
+    enum Role { FOLLOWER, CANDIDATE, LEADER }
+
+    private Role role = Role.FOLLOWER;
+    private int currentTerm = 0;
+    private int votedFor = -1;
+    private int leaderId = -1;
     final int id;
     final int port;
 
@@ -74,6 +81,6 @@ public class Node {
 
         }
 
-        return gson.toJson(new Status(id, port,"follower", peers));
-    }
+        return gson.toJson(new Status(id, port, role.name().toLowerCase(),
+                currentTerm, leaderId, peers));    }
 }
