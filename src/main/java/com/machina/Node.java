@@ -17,7 +17,7 @@ public class Node {
                           int leaderId, int logSize) {}
 
     private record VoteRequest (int term , int candidateId){}
-    private record Heartbeat (int term , int leaderId){}
+    private record Heartbeat (int term , int leaderId , List<LogEntry> entries){}
     private record LogEntry (int term , int index , String key , String value ){}
     private static final Gson gson = new Gson();
     private long lastActivityMs = System.currentTimeMillis();
@@ -116,7 +116,7 @@ public class Node {
 
 
     private void sendHeartbeats() {
-        String json = gson.toJson(new Heartbeat(currentTerm, id));
+        String json = gson.toJson(new Heartbeat(currentTerm, id , log));
         for (int peerId : CLUSTER.keySet()) {
             if (peerId == id) {
                 continue;
@@ -143,6 +143,11 @@ public class Node {
             role = Role.FOLLOWER;
             leaderId = hb.leaderId();
             lastActivityMs = System.currentTimeMillis();
+
+            log.clear();
+            if (hb.entries() != null ){
+                log.addAll(hb.entries());
+            }
         }
     }
 
