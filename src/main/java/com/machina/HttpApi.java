@@ -38,6 +38,12 @@ public class HttpApi {
             respond(exchange, 200, "{}");
         });
 
+        server.createContext("/set", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(),
+                    StandardCharsets.UTF_8);
+            respond(exchange, 200, node.handleSet(body));
+        });
+
         server.start();
     }
 

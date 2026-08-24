@@ -8,19 +8,17 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.TreeMap;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class Node {
 
     private record Status(int nodeId, int port , String role, int currentTerm,
-                          int leaderId, Map<Integer,String>peers) {}
+                          int leaderId, int logSize) {}
 
     private record VoteRequest (int term , int candidateId){}
     private record Heartbeat (int term , int leaderId){}
+    private record LogEntry (int term , int index , String key , String value ){}
     private static final Gson gson = new Gson();
     private long lastActivityMs = System.currentTimeMillis();
     private long electionTimeoutMs = freshTimeout();
@@ -34,7 +32,7 @@ public class Node {
     );
 
     private static final int MAJORITY = 2 ;
-    private static final long DEAD_AFTER_MS =1500 ;
+//    private static final long DEAD_AFTER_MS =1500 ;
     private static final HttpClient http = HttpClient.newBuilder()
                         .connectTimeout(Duration.ofMillis(200))
                         .build();
@@ -48,8 +46,9 @@ public class Node {
     final int id;
     final int port;
 
-    private final Map<Integer, Long> lastSeen = new ConcurrentHashMap<>();
+//    private final Map<Integer, Long> lastSeen = new ConcurrentHashMap<>();
 
+    private final List<LogEntry> log = new ArrayList<>();
 
     synchronized void tick() {
         if ((role == Role.FOLLOWER || role == Role.CANDIDATE)
@@ -112,21 +111,8 @@ public class Node {
     }
 
     String statusJson() {
-
-        Map<Integer, String> peers = new LinkedHashMap<>();
-        for (int peerId : CLUSTER.keySet()) {
-            if (peerId == id) {
-                continue;
-            }
-            Long seen = lastSeen.get(peerId);
-            boolean alive = seen != null && System.currentTimeMillis() - seen < DEAD_AFTER_MS;
-            peers.put(peerId, alive ? "ALIVE" : "DEAD");
-
-        }
-
-
         return gson.toJson(new Status(id, port, role.name().toLowerCase(),
-                currentTerm, leaderId, peers));    }
+                currentTerm, leaderId, log.size()));    }
 
 
     private void sendHeartbeats() {
@@ -182,6 +168,24 @@ public class Node {
         JsonObject response = new JsonObject();
         response.addProperty("voteGranted" , grant );
         return response.toString();
+    }
+    synchronized String handleSet (String requestBody) {
+        JsonObject req = gson.fromJson(requestBody, JsonObject.class);
+        String key = req.get("key").getAsString();
+        String value = req.get("value").getAsString();
+        if (role != Role.LEADER) {
+            JsonObject res = new JsonObject();
+            res.addProperty("error","not leader");
+            res.addProperty("leaderId", leaderId);
+            return res.toString();
+        }
+        log.add(new LogEntry(currentTerm, log.size()+1, key , value ));
+        System.out.println("log : appended "+ key + "= " + value+"at index "+ log.size());
+
+        JsonObject res = new JsonObject();
+        res.addProperty("logged" , true );
+        res.addProperty("index", log.size());
+        return res.toString();
     }
 
 
