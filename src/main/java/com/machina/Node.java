@@ -20,6 +20,7 @@ public class Node {
                           int leaderId, Map<Integer,String>peers) {}
 
     private record VoteRequest (int term , int candidateId){}
+    private record Heartbeat (int term , int leaderId){}
     private static final Gson gson = new Gson();
     private long lastActivityMs = System.currentTimeMillis();
     private long electionTimeoutMs = freshTimeout();
@@ -54,6 +55,10 @@ public class Node {
         if ((role == Role.FOLLOWER || role == Role.CANDIDATE)
                 && System.currentTimeMillis() - lastActivityMs > electionTimeoutMs) {
             startElection();
+            return;
+        }
+        if (role == Role.LEADER) {
+            sendHeartbeats();
         }
     }
     private static long freshTimeout() {
@@ -70,7 +75,7 @@ public class Node {
 
             System.out.println("election: node " + id + " declares candidacy, term "+ currentTerm);
             String json = gson.toJson(new VoteRequest(electionTerm, id));
-            int votes = -1 ;
+            int votes = 1 ;
 
             for (int peerId : CLUSTER.keySet()) {
                 if (peerId == id) {continue;
@@ -124,20 +129,55 @@ public class Node {
                 currentTerm, leaderId, peers));    }
 
 
+    private void sendHeartbeats() {
+        String json = gson.toJson(new Heartbeat(currentTerm, id));
+        for (int peerId : CLUSTER.keySet()) {
+            if (peerId == id) {
+                continue;
+            }
+            try {
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create("http://localhost:" + CLUSTER.get(peerId)
+                                + "/heartbeat"))
+                        .timeout(Duration.ofMillis(300))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(json))
+                        .build();
+                http.send(request, HttpResponse.BodyHandlers.ofString());
+            } catch (Exception e) {
+                System.out.println("heartbeat: node " + peerId + " unreachable");
+            }
+        }
+    }
+
+    synchronized void handleHeartbeat(String requestBody) {
+        Heartbeat hb = gson.fromJson(requestBody, Heartbeat.class);
+        if (hb.term() >= currentTerm) {
+            currentTerm = hb.term();
+            role = Role.FOLLOWER;
+            leaderId = hb.leaderId();
+            lastActivityMs = System.currentTimeMillis();
+        }
+    }
+
     synchronized String handleRequestVote(String requestBody) {
 
         VoteRequest req = gson.fromJson(requestBody, VoteRequest.class);
         boolean grant ;
-        if (req.term()>currentTerm) {
-            currentTerm = req.term();
-            role = Role.FOLLOWER;
-            votedFor = - 1;
-        }
-        grant = votedFor == -1 || votedFor == req.candidateId();
+        if (req.term() < currentTerm) {
+            grant = false;
+        } else {
+            if (req.term()>currentTerm) {
+                currentTerm = req.term();
+                role = Role.FOLLOWER;
+                votedFor = - 1;
+            }
+            grant = votedFor == -1 || votedFor == req.candidateId();
 
-        if(grant) {
-
-               votedFor = req.candidateId();
+            if(grant) {
+                votedFor = req.candidateId();
+                lastActivityMs = System.currentTimeMillis();
+            }
         }
         JsonObject response = new JsonObject();
         response.addProperty("voteGranted" , grant );

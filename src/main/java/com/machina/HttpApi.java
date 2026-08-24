@@ -31,6 +31,12 @@ public class HttpApi {
                     StandardCharsets.UTF_8);
             respond(exchange, 200, node.handleRequestVote(body));
         });
+        server.createContext("/heartbeat", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(),
+                    StandardCharsets.UTF_8);
+            node.handleHeartbeat(body);
+            respond(exchange, 200, "{}");
+        });
 
         server.start();
     }
