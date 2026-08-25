@@ -34,14 +34,29 @@ public class HttpApi {
         server.createContext("/heartbeat", exchange -> {
             String body = new String(exchange.getRequestBody().readAllBytes(),
                     StandardCharsets.UTF_8);
-            node.handleHeartbeat(body);
-            respond(exchange, 200, "{}");
+            respond(exchange, 200, node.handleHeartbeat(body));
         });
 
         server.createContext("/set", exchange -> {
             String body = new String(exchange.getRequestBody().readAllBytes(),
                     StandardCharsets.UTF_8);
             respond(exchange, 200, node.handleSet(body));
+        });
+
+        server.createContext("/get", exchange -> {
+            String query = exchange.getRequestURI().getQuery();
+            String key = null;
+            if (query != null) {
+                for (String part : query.split("&")) {
+                    String[] kv = part.split("=", 2);
+                    if (kv.length == 2 && kv[0].equals("key")) {
+                        key = kv[1];
+                    }
+                }
+            }
+            respond(exchange, 200, key == null
+                    ? "{\"error\":\"missing key\"}"
+                    : node.handleGet(key));
         });
 
         server.start();

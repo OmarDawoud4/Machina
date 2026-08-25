@@ -9,15 +9,16 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class Node {
 
     private record Status(int nodeId, int port , String role, int currentTerm,
-                          int leaderId, int logSize) {}
+                          int leaderId, int logSize, int commitIndex, int lastApplied) {}
 
     private record VoteRequest (int term , int candidateId){}
-    private record Heartbeat (int term , int leaderId , List<LogEntry> entries){}
+    private record Heartbeat (int term , int leaderId , List<LogEntry> entries, int commitIndex){}
     private record LogEntry (int term , int index , String key , String value ){}
     private static final Gson gson = new Gson();
     private long lastActivityMs = System.currentTimeMillis();
@@ -49,6 +50,10 @@ public class Node {
 //    private final Map<Integer, Long> lastSeen = new ConcurrentHashMap<>();
 
     private final List<LogEntry> log = new ArrayList<>();
+    private final Map<String, String> state = new ConcurrentHashMap<>();
+    private final Map<Integer, Integer> matchIndex = new ConcurrentHashMap<>();
+    private int commitIndex = 0;
+    private int lastApplied = 0;
 
     synchronized void tick() {
         if ((role == Role.FOLLOWER || role == Role.CANDIDATE)
@@ -112,11 +117,24 @@ public class Node {
 
     String statusJson() {
         return gson.toJson(new Status(id, port, role.name().toLowerCase(),
-                currentTerm, leaderId, log.size()));    }
+                currentTerm, leaderId, log.size(), commitIndex, lastApplied));
+    }
+
+    synchronized String handleGet(String key) {
+        JsonObject res = new JsonObject();
+        res.addProperty("key", key);
+        String value = state.get(key);
+        if (value == null) {
+            res.addProperty("error", "not found");
+        } else {
+            res.addProperty("value", value);
+        }
+        return res.toString();
+    }
 
 
     private void sendHeartbeats() {
-        String json = gson.toJson(new Heartbeat(currentTerm, id , log));
+        String json = gson.toJson(new Heartbeat(currentTerm, id, log, commitIndex));
         for (int peerId : CLUSTER.keySet()) {
             if (peerId == id) {
                 continue;
@@ -129,14 +147,49 @@ public class Node {
                         .header("Content-Type", "application/json")
                         .POST(HttpRequest.BodyPublishers.ofString(json))
                         .build();
-                http.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response =
+                        http.send(request, HttpResponse.BodyHandlers.ofString());
+                JsonObject ack = gson.fromJson(response.body(), JsonObject.class);
+                matchIndex.put(peerId, ack.get("matchIndex").getAsInt());
             } catch (Exception e) {
                 System.out.println("heartbeat: node " + peerId + " unreachable");
             }
         }
+        advanceCommitIndex();
     }
 
-    synchronized void handleHeartbeat(String requestBody) {
+    private void advanceCommitIndex() {
+        for (int n = log.size(); n > commitIndex; n--) {
+            int copies = 1;
+            for (int peerId : CLUSTER.keySet()) {
+                if (peerId == id) {
+                    continue;
+                }
+                Integer m = matchIndex.get(peerId);
+                if (m != null && m >= n) {
+                    copies++;
+                }
+            }
+            if (copies >= MAJORITY) {
+                commitIndex = n;
+                System.out.println("commit: majority holds through index " + n);
+                applyCommitted();
+                return;
+            }
+        }
+    }
+
+    private synchronized void applyCommitted() {
+        while (lastApplied < commitIndex && lastApplied < log.size()) {
+            LogEntry e = log.get(lastApplied);
+            state.put(e.key(), e.value());
+            lastApplied++;
+            System.out.println("apply: " + e.key() + "=" + e.value()
+                    + "  (applied " + lastApplied + "/" + commitIndex + ")");
+        }
+    }
+
+    synchronized String handleHeartbeat(String requestBody) {
         Heartbeat hb = gson.fromJson(requestBody, Heartbeat.class);
         if (hb.term() >= currentTerm) {
             currentTerm = hb.term();
@@ -148,7 +201,13 @@ public class Node {
             if (hb.entries() != null ){
                 log.addAll(hb.entries());
             }
+
+            commitIndex = Math.min(hb.commitIndex(), log.size());
+            applyCommitted();
         }
+        JsonObject res = new JsonObject();
+        res.addProperty("matchIndex", log.size());
+        return res.toString();
     }
 
     synchronized String handleRequestVote(String requestBody) {
